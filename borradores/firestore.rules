@@ -1,0 +1,182 @@
+rules_version = '2';
+
+// BORRADOR (Paso 4) — NO PUBLICADO.
+// Reemplazaría a firestore.rules solo después de:
+//   1. Comprobar que el inicio de sesión con Google funciona en todos los dominios de la app.
+//   2. Agregar granjaId a los lotes antiguos (Paso 5) y consultar lotes con where('granjaId', '==', ...).
+//   3. Escuchar los lotes solo cuando el usuario es miembro activo de la granja.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Todo lo que no se permite explícitamente queda denegado
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------- Identidad y perfil ----------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Administrador Maestro: solo con el correo verificado por el proveedor (Google lo verifica)
+    function isMasterAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == 'carlosbs1579@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function perfilPath() {
+      return /databases/$(database)/documents/usuarios/$(request.auth.uid);
+    }
+
+    function tienePerfil() {
+      return isSignedIn() && exists(perfilPath());
+    }
+
+    function perfil() {
+      return get(perfilPath()).data;
+    }
+
+    // Los perfiles antiguos sin granjaId o rol se tratan como de la granja predeterminada / operario
+    function granjaUsuario() {
+      return perfil().get('granjaId', 'cultivos-lore');
+    }
+
+    function rolUsuario() {
+      return perfil().get('rol', 'operario');
+    }
+
+    function esActivo() {
+      return tienePerfil() && perfil().estado == 'activo';
+    }
+
+    function esAdminGranja() {
+      return isMasterAdmin() || (esActivo() && rolUsuario() == 'admin');
+    }
+
+    // Miembro autorizado (cualquier rol activo, incluido "consulta") de la granja indicada
+    function esMiembroDe(granjaId) {
+      return isMasterAdmin() || (esActivo() && granjaUsuario() == granjaId);
+    }
+
+    function tienePermiso(permiso) {
+      return esAdminGranja()
+        || (esActivo()
+            && rolUsuario() != 'consulta'
+            && perfil().get('permisos', {}).get(permiso, false) == true);
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function soloCambia(campos) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(campos);
+    }
+
+    // ---------- Lotes ----------
+
+    function granjaDelLote() {
+      return resource.data.get('granjaId', 'cultivos-lore');
+    }
+
+    match /lotes/{codigo} {
+      // Lectura pública de UN lote por su código: la necesita la vista del QR desde cualquier teléfono
+      allow get: if true;
+
+      // Listar lotes: solo miembros autorizados de la granja. La consulta del panel debe incluir
+      // where('granjaId', '==', <granja del usuario>) para que la regla pueda comprobarse.
+      allow list: if esMiembroDe(resource.data.granjaId);
+
+      allow create: if isValidId(codigo)
+        && tienePermiso('crearLotes')
+        && request.resource.data.codigo == codigo
+        && request.resource.data.granjaId == granjaUsuario()
+        && request.resource.data.creadoPorUid == request.auth.uid
+        && request.resource.data.creadoPor == request.auth.token.email
+        && request.resource.data.estado == 'activo'
+        && request.resource.data.eventos.size() == 1;
+
+      // Registrar un evento: la cadena solo puede crecer de a un evento
+      allow update: if esMiembroDe(granjaDelLote())
+        && tienePermiso('registrarEventos')
+        && soloCambia(['eventos', 'resumen', 'actualizadoEn'])
+        && request.resource.data.eventos.size() == resource.data.eventos.size() + 1;
+
+      // Cerrar el lote: solo cambian los campos del cierre, nunca los eventos
+      allow update: if esMiembroDe(granjaDelLote())
+        && tienePermiso('cerrarLotes')
+        && resource.data.estado == 'activo'
+        && request.resource.data.estado == 'cerrado'
+        && soloCambia(['estado', 'fechaCierre', 'resumen', 'pdfPath', 'pdfUrl', 'versionPdf', 'pdfActualizadoEn', 'actualizadoEn']);
+
+      // Migración (Paso 5): un administrador asigna su granja a un lote antiguo que no la tiene
+      allow update: if esAdminGranja()
+        && !('granjaId' in resource.data)
+        && soloCambia(['granjaId'])
+        && request.resource.data.granjaId == granjaUsuario();
+
+      allow delete: if false;
+    }
+
+    // ---------- Contadores de códigos de lote ----------
+
+    match /contadores/{contadorId} {
+      allow read: if isValidId(contadorId) && tienePermiso('crearLotes');
+      allow create: if isValidId(contadorId)
+        && tienePermiso('crearLotes')
+        && request.resource.data.valor == 1;
+      allow update: if isValidId(contadorId)
+        && tienePermiso('crearLotes')
+        && request.resource.data.valor == resource.data.valor + 1;
+      allow delete: if false;
+    }
+
+    // ---------- Configuración general ----------
+
+    match /configuracion/{docId} {
+      // La vista pública del QR muestra la ficha nutricional y los rangos de referencia
+      allow read: if true;
+      allow write: if isValidId(docId)
+        && (tienePermiso('gestionarConfiguracion') || tienePermiso('gestionarEstanques'));
+    }
+
+    // ---------- Perfiles de usuario ----------
+
+    match /usuarios/{userId} {
+      // Cada usuario lee su propio perfil; los administradores leen todos
+      allow read: if (isSignedIn() && request.auth.uid == userId) || esAdminGranja();
+
+      // Alta propia: siempre como operario pendiente, sin permisos, en la granja predeterminada
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.rol == 'operario'
+        && request.resource.data.estado == 'pendiente'
+        && request.resource.data.granjaId == 'cultivos-lore'
+        && !request.resource.data.permisos.values().hasAny([true]);
+
+      // El Administrador Maestro crea o actualiza su propio perfil con todos los permisos
+      allow create, update: if isMasterAdmin() && request.auth.uid == userId;
+
+      // Cambios propios permitidos: solo el nombre visible
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && soloCambia(['displayName', 'actualizadoEn']);
+
+      // Un administrador de la granja gestiona rol, cargo, estado y permisos de sus usuarios.
+      // Nadie salvo el propio Administrador Maestro puede modificar el perfil del Administrador Maestro.
+      allow update: if esAdminGranja()
+        && resource.data.email != 'carlosbs1579@gmail.com'
+        && (isMasterAdmin() || resource.data.get('granjaId', 'cultivos-lore') == granjaUsuario())
+        && (isMasterAdmin() || request.resource.data.granjaId == granjaUsuario())
+        && soloCambia(['rol', 'granjaId', 'cargo', 'estado', 'permisos', 'autorizadoPor', 'actualizadoEn'])
+        && request.resource.data.rol in ['admin', 'operario', 'consulta']
+        && request.resource.data.estado in ['activo', 'pendiente', 'inactivo'];
+
+      allow delete: if false;
+    }
+  }
+}
