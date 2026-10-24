@@ -70,6 +70,15 @@ export function esAdministrador(perfil: UsuarioPerfil | null): boolean {
 }
 
 /**
+ * Indica si el perfil es miembro autorizado de su granja (cualquier rol en estado activo).
+ * Solo los miembros autorizados pueden consultar la lista de lotes de la granja.
+ */
+export function esMiembroActivo(perfil: UsuarioPerfil | null): boolean {
+  if (!perfil) return false;
+  return esAdministrador(perfil) || perfil.estado === 'activo';
+}
+
+/**
  * Verifica si un perfil cuenta con un permiso específico
  */
 export function verificarPermiso(

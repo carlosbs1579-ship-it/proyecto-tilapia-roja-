@@ -2,7 +2,9 @@ import {
   collection,
   doc,
   onSnapshot,
-  runTransaction
+  query,
+  runTransaction,
+  where
 } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
 import { Lote, EventoLote, TipoEvento, ConfiguracionGeneral } from '../types';
@@ -364,33 +366,21 @@ export async function cerrarLote(
 }
 
 /**
- * Indica si un lote pertenece a la granja. Los lotes creados antes de introducir `granjaId`
- * no tienen ese campo y se consideran de la granja predeterminada hasta que se migren.
- */
-function perteneceAGranja(lote: Lote, granjaId: string): boolean {
-  if (!lote.granjaId) return granjaId === GRANJA_ID_PREDETERMINADA;
-  return lote.granjaId === granjaId;
-}
-
-/**
- * Escucha en tiempo real todos los lotes de la granja, sin importar quién los creó
+ * Escucha en tiempo real todos los lotes de la granja, sin importar quién los creó.
+ * El filtro por granjaId es obligatorio para que las reglas de seguridad permitan la consulta.
+ * Los lotes antiguos sin granjaId no aparecen hasta que se migren.
  */
 export function escucharLotes(
   onUpdate: (lotes: Lote[]) => void,
   onError?: (error: any) => void,
   granjaId: string = GRANJA_ID_PREDETERMINADA
 ): () => void {
-  // Se escucha la colección completa y se filtra por granja en el cliente para no ocultar los
-  // lotes antiguos sin `granjaId`. Tras migrarlos, conviene usar where('granjaId', '==', granjaId).
   return onSnapshot(
-    collection(db, 'lotes'),
+    query(collection(db, 'lotes'), where('granjaId', '==', granjaId)),
     (snapshot) => {
       const lista: Lote[] = [];
       snapshot.forEach((docSnap) => {
-        const lote = docSnap.data() as Lote;
-        if (perteneceAGranja(lote, granjaId)) {
-          lista.push(lote);
-        }
+        lista.push(docSnap.data() as Lote);
       });
       lista.sort((a, b) => (b.consecutivo || 0) - (a.consecutivo || 0));
       onUpdate(lista);

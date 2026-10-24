@@ -6,7 +6,7 @@ import { Lote, ConfiguracionGeneral, UsuarioPerfil } from './types';
 import { CONFIG_DEFAULT } from './utils/constants';
 import { escucharConfiguracion } from './services/configService';
 import { escucharLotes } from './services/lotesService';
-import { sincronizarPerfilUsuario, esAdminMaestro } from './services/usuariosService';
+import { sincronizarPerfilUsuario, esAdminMaestro, esMiembroActivo } from './services/usuariosService';
 
 import { Navbar } from './components/Navbar';
 import { DashboardTab } from './components/DashboardTab';
@@ -126,8 +126,17 @@ export default function App() {
     return () => unsubConfig();
   }, []);
 
-  // 4. Escuchar lotes en tiempo real
+  // 4. Escuchar en tiempo real los lotes de la granja, solo si el usuario es miembro activo
+  const granjaActiva = esMiembroActivo(perfilUsuario) ? perfilUsuario!.granjaId : null;
+
   useEffect(() => {
+    if (!granjaActiva) {
+      setLotes([]);
+      setLotesCargando(false);
+      setErrorConexion(null);
+      return;
+    }
+
     setLotesCargando(true);
     const unsubLotes = escucharLotes(
       (listaLotes) => {
@@ -151,11 +160,12 @@ export default function App() {
             ? 'No tienes permiso para consultar los lotes de la granja.'
             : 'No fue posible conectar con la base de datos de lotes. Los datos mostrados pueden estar desactualizados.'
         );
-      }
+      },
+      granjaActiva
     );
 
     return () => unsubLotes();
-  }, [usuario]);
+  }, [granjaActiva]);
 
   const handleCerrarSesion = async () => {
     try {
@@ -215,7 +225,7 @@ export default function App() {
             <div className="flex items-center space-x-2">
               <Lock className="w-4 h-4 text-sky-400 shrink-0" />
               <span>
-                <strong>Modo Consulta:</strong> Para crear lotes o registrar eventos debes ingresar. Carlos (<strong>carlosbs1579@gmail.com</strong>) tiene acceso de Administrador Maestro.
+                <strong>Modo Consulta:</strong> Para ver los lotes de la granja, crear lotes o registrar eventos debes ingresar. Los lotes se pueden consultar uno a uno escaneando su código QR. Carlos (<strong>carlosbs1579@gmail.com</strong>) tiene acceso de Administrador Maestro.
               </span>
             </div>
             <button
@@ -254,7 +264,19 @@ export default function App() {
           <div className="max-w-7xl mx-auto flex items-center space-x-2">
             <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
             <span>
-              <strong>Perfil Pendiente:</strong> Tu cuenta ({usuario.email}) ha sido registrada pero aún no ha sido autorizada por Carlos (<strong>carlosbs1579@gmail.com</strong>). Tan pronto Carlos te asigne tu posición y permisos en la web, podrás crear lotes y cargar mediciones.
+              <strong>Perfil Pendiente:</strong> Tu cuenta ({usuario.email}) ha sido registrada pero aún no ha sido autorizada por Carlos (<strong>carlosbs1579@gmail.com</strong>). Tan pronto Carlos te asigne tu posición y permisos en la web, podrás ver los lotes de la granja, crear lotes y cargar mediciones.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* BANNER 4: SI EL USUARIO FUE DESACTIVADO */}
+      {usuario && !esAdmin && perfilUsuario?.estado === 'inactivo' && (
+        <div className="bg-slate-200 border-b border-slate-300 px-4 py-2 text-xs text-slate-800">
+          <div className="max-w-7xl mx-auto flex items-center space-x-2">
+            <ShieldAlert className="w-4 h-4 text-slate-600 shrink-0" />
+            <span>
+              <strong>Cuenta inactiva:</strong> Tu cuenta ({usuario.email}) no tiene acceso a los lotes de la granja. Contacta al administrador si crees que es un error.
             </span>
           </div>
         </div>
