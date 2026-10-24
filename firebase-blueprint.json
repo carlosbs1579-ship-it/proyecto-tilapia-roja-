@@ -23,7 +23,9 @@
         "pdfUrl": { "type": "string", "description": "URL pública directa del PDF" },
         "versionPdf": { "type": "number", "description": "Número de versión incremental del PDF" },
         "pdfActualizadoEn": { "type": "string", "description": "Timestamp ISO de última actualización del PDF" },
+        "granjaId": { "type": "string", "description": "Granja a la que pertenece el lote; sus miembros autorizados lo comparten" },
         "creadoPor": { "type": "string", "description": "Email del operario que creó el lote" },
+        "creadoPorUid": { "type": "string", "description": "UID de Firebase Auth del operario que creó el lote" },
         "creadoEn": { "type": "string", "description": "Timestamp ISO o Firestore de creación" },
         "actualizadoEn": { "type": "string", "description": "Timestamp ISO o Firestore de última actualización" }
       },

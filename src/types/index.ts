@@ -75,7 +75,9 @@ export interface Lote {
   pdfUrl?: string;
   versionPdf: number;
   pdfActualizadoEn?: string;
+  granjaId?: string; // Granja a la que pertenece el lote (los lotes antiguos pueden no tenerla)
   creadoPor: string;
+  creadoPorUid?: string | null; // UID de Firebase Auth de quien creó el lote
   creadoEn: string;
   actualizadoEn: string;
   observacionesIniciales?: string;

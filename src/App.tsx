@@ -154,6 +154,11 @@ export default function App() {
       (err) => {
         console.warn('Error escuchando lotes en Firestore:', err);
         setLotesCargando(false);
+        setErrorConexion(
+          err?.code === 'permission-denied'
+            ? 'No tienes permiso para consultar los lotes de la granja.'
+            : 'No fue posible conectar con la base de datos de lotes. Los datos mostrados pueden estar desactualizados.'
+        );
       }
     );
 

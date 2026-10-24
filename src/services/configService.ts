@@ -77,14 +77,9 @@ export async function guardarConfiguracion(
     actualizadoEn: new Date().toISOString()
   };
 
-  // Guardar siempre de inmediato en local
+  // Guardar en Firestore primero: si falla, el error llega a la pantalla en lugar de quedar
+  // guardado solo en este navegador, donde los demás usuarios no lo verían
+  const configDocRef = doc(db, 'configuracion', 'general');
+  await setDoc(configDocRef, payload, { merge: true });
   guardarConfigLocal(payload);
-
-  // Intentar actualizar en Firestore
-  try {
-    const configDocRef = doc(db, 'configuracion', 'general');
-    await setDoc(configDocRef, payload, { merge: true });
-  } catch (error) {
-    console.warn('Configuración guardada localmente (Firestore no disponible):', error);
-  }
 }

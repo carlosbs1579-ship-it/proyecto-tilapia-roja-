@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/firebaseConfig';
 import { Lote, ConfiguracionGeneral } from '../types';
-import { getLotesLocales, guardarLotesLocales } from '../services/lotesService';
 import { verificarIntegridadCadena } from '../services/hashService';
 import { descargarPdfLoteLocal } from '../services/pdfService';
 import { CONFIG_DEFAULT, formatearFechaColombia } from '../utils/constants';
@@ -63,17 +62,7 @@ export const PublicTraceabilityView: React.FC<PublicTraceabilityViewProps> = ({
 
       const codigoLimpio = decodeURIComponent(codigoLote || '').trim();
 
-      // 1. Buscar primero en almacenamiento local
-      const locales = getLotesLocales();
-      const loteLocal = locales.find(
-        (l) => l.codigo.trim().toUpperCase() === codigoLimpio.toUpperCase()
-      );
-
-      if (loteLocal) {
-        setLote(loteLocal);
-      }
-
-      // 2. Buscar en Cloud Firestore (para móviles y accesos externos por QR)
+      // Buscar en Cloud Firestore (para móviles y accesos externos por QR)
       try {
         let snap = await getDoc(doc(db, 'lotes', codigoLimpio));
 
@@ -86,22 +75,12 @@ export const PublicTraceabilityView: React.FC<PublicTraceabilityViewProps> = ({
           const loteFs = snap.data() as Lote;
           setLote(loteFs);
           setError(null);
-
-          // Almacenar en caché local para que futuras aperturas en este dispositivo sean instantáneas
-          try {
-            const actuales = getLotesLocales();
-            if (!actuales.some((l) => l.codigo === loteFs.codigo)) {
-              guardarLotesLocales([...actuales, loteFs]);
-            }
-          } catch {}
-        } else if (!loteLocal) {
+        } else {
           setError(`El lote "${codigoLimpio}" no se encuentra registrado en el sistema oficial de trazabilidad.`);
         }
       } catch (err: any) {
         console.warn('Consulta pública Firestore:', err);
-        if (!loteLocal) {
-          setError('No fue posible consultar el servidor en este momento. Por favor verifica tu conexión.');
-        }
+        setError('No fue posible consultar el servidor en este momento. Por favor verifica tu conexión.');
       } finally {
         setCargando(false);
       }

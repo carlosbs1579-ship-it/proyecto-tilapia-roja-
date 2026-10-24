@@ -1,6 +1,12 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import {
+  type Firestore,
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfigFile from '../../firebase-applet-config.json';
 
@@ -23,10 +29,24 @@ export const firebaseConfig = activeConfig;
 
 const app = getApps().length === 0 ? initializeApp(activeConfig) : getApp();
 
-// Conectar con la base de datos Firestore especificada
-export const db = activeConfig.firestoreDatabaseId && activeConfig.firestoreDatabaseId !== '(default)'
-  ? getFirestore(app, activeConfig.firestoreDatabaseId)
-  : getFirestore(app);
+// Conectar con la base de datos Firestore especificada.
+// Se usa la caché persistente oficial de Firestore (IndexedDB) para lecturas sin conexión,
+// en lugar de copias propias en localStorage que no se comparten entre usuarios.
+const databaseId = activeConfig.firestoreDatabaseId && activeConfig.firestoreDatabaseId !== '(default)'
+  ? activeConfig.firestoreDatabaseId
+  : undefined;
+
+function iniciarFirestore(): Firestore {
+  try {
+    const ajustes = { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) };
+    return databaseId ? initializeFirestore(app, ajustes, databaseId) : initializeFirestore(app, ajustes);
+  } catch {
+    // Ya inicializado (recarga en caliente) o caché no disponible en este navegador
+    return databaseId ? getFirestore(app, databaseId) : getFirestore(app);
+  }
+}
+
+export const db = iniciarFirestore();
 
 export const auth = getAuth(app);
 export const storage = getStorage(app);
