@@ -62,6 +62,8 @@
         "uid": { "type": "string", "description": "ID de usuario de Firebase Auth" },
         "email": { "type": "string", "description": "Correo del operario" },
         "displayName": { "type": "string", "description": "Nombre del operario" },
+        "rol": { "type": "string", "enum": ["admin", "operario", "consulta"], "description": "Rol del usuario en la granja" },
+        "granjaId": { "type": "string", "description": "Granja a la que pertenece el usuario" },
         "cargo": { "type": "string", "description": "Posición asignada por el administrador" },
         "estado": { "type": "string", "enum": ["activo", "pendiente", "inactivo"], "description": "Estado de autorización" },
         "permisos": { "type": "object", "description": "Permisos específicos otorgados" },

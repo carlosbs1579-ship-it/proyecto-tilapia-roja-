@@ -3,7 +3,7 @@ import { X, PlusCircle, AlertCircle, Calendar, Hash, Scale, Building2, FileText 
 import { ConfiguracionGeneral, Lote, UsuarioPerfil } from '../types';
 import { getFechaHoyBogota } from '../utils/constants';
 import { crearNuevoLote } from '../services/lotesService';
-import { esAdminMaestro } from '../services/usuariosService';
+import { esAdminMaestro, verificarPermiso } from '../services/usuariosService';
 
 interface NuevoLoteModalProps {
   isOpen: boolean;
@@ -24,7 +24,7 @@ export const NuevoLoteModal: React.FC<NuevoLoteModalProps> = ({
 }) => {
   const hoy = getFechaHoyBogota();
   const esAdmin = esAdminMaestro(userEmail);
-  const puedeCrear = esAdmin || Boolean(perfilActual?.estado === 'activo' && perfilActual?.permisos?.crearLotes);
+  const puedeCrear = esAdmin || verificarPermiso(perfilActual, 'crearLotes');
   const [estanque, setEstanque] = useState(config.estanques[0]?.codigo || 'E1');
   const [fechaSiembra, setFechaSiembra] = useState(hoy);
   const [cantidadSembrada, setCantidadSembrada] = useState<number | ''>(5000);

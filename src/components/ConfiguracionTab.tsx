@@ -17,13 +17,22 @@ import {
   Check,
   Lock
 } from 'lucide-react';
-import { ConfiguracionGeneral, EstanqueConfig, UsuarioPerfil, PermisosUsuario, ADMIN_MASTER_EMAIL } from '../types';
+import { ConfiguracionGeneral, EstanqueConfig, UsuarioPerfil, PermisosUsuario, RolUsuario, ADMIN_MASTER_EMAIL } from '../types';
 import { guardarConfiguracion } from '../services/configService';
 import {
   esAdminMaestro,
+  esAdministrador,
+  verificarPermiso,
   escucharUsuarios,
   actualizarPerfilOperario
 } from '../services/usuariosService';
+
+type EdicionUsuario = {
+  rol: RolUsuario;
+  cargo: string;
+  estado: 'activo' | 'pendiente' | 'inactivo';
+  permisos: PermisosUsuario;
+};
 
 interface ConfiguracionTabProps {
   config: ConfiguracionGeneral;
@@ -38,7 +47,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
   perfilActual,
   onConfigActualizada
 }) => {
-  const esAdmin = esAdminMaestro(userEmail);
+  const esAdmin = esAdminMaestro(userEmail) || esAdministrador(perfilActual);
 
   // Estado local para edición de configuración general
   const [estanques, setEstanques] = useState<EstanqueConfig[]>(config.estanques || []);
@@ -59,9 +68,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
   const [usuariosCargando, setUsuariosCargando] = useState(true);
 
   // Estado para edición en línea de cargos y permisos de operarios
-  const [edicionUsuarios, setEdicionUsuarios] = useState<
-    Record<string, { cargo: string; estado: 'activo' | 'pendiente' | 'inactivo'; permisos: PermisosUsuario }>
-  >({});
+  const [edicionUsuarios, setEdicionUsuarios] = useState<Record<string, EdicionUsuario>>({});
   const [guardandoUsuarioId, setGuardandoUsuarioId] = useState<string | null>(null);
   const [mensajeUsuarioExito, setMensajeUsuarioExito] = useState<string | null>(null);
 
@@ -78,9 +85,10 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
         setUsuarios(lista);
         setUsuariosCargando(false);
         // Inicializar mapa de edición
-        const mapa: Record<string, { cargo: string; estado: 'activo' | 'pendiente' | 'inactivo'; permisos: PermisosUsuario }> = {};
+        const mapa: Record<string, EdicionUsuario> = {};
         for (const u of lista) {
           mapa[u.uid] = {
+            rol: u.rol,
             cargo: u.cargo || '',
             estado: u.estado,
             permisos: { ...u.permisos }
@@ -160,6 +168,16 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
       [uid]: {
         ...prev[uid],
         cargo: nuevoCargo
+      }
+    }));
+  };
+
+  const handleCambioRol = (uid: string, nuevoRol: RolUsuario) => {
+    setEdicionUsuarios((prev) => ({
+      ...prev,
+      [uid]: {
+        ...prev[uid],
+        rol: nuevoRol
       }
     }));
   };
@@ -315,6 +333,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
                 {usuarios.map((u) => {
                   const esElAdmin = esAdminMaestro(u.email);
                   const ed = edicionUsuarios[u.uid] || {
+                    rol: u.rol,
                     cargo: u.cargo,
                     estado: u.estado,
                     permisos: u.permisos
@@ -357,7 +376,17 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
 
                         {/* Selector de Estado */}
                         {!esElAdmin ? (
-                          <div className="flex items-center space-x-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="text-xs font-semibold text-slate-700">Rol:</label>
+                            <select
+                              value={ed.rol}
+                              onChange={(e) => handleCambioRol(u.uid, e.target.value as RolUsuario)}
+                              className="px-3 py-1 text-xs font-bold rounded-lg border border-slate-300 bg-white text-slate-700 focus:outline-none"
+                            >
+                              <option value="operario">Operario</option>
+                              <option value="admin">Administrador</option>
+                              <option value="consulta">Consulta (solo lectura)</option>
+                            </select>
                             <label className="text-xs font-semibold text-slate-700">Estado:</label>
                             <select
                               value={ed.estado}
@@ -626,7 +655,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
                 </p>
               </div>
 
-              {(esAdmin || perfilActual?.permisos?.gestionarEstanques) && (
+              {(esAdmin || verificarPermiso(perfilActual, 'gestionarEstanques')) && (
                 <button
                   type="button"
                   onClick={() => handleEliminarEstanque(est.codigo)}
@@ -641,7 +670,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
         </div>
 
         {/* Formulario para agregar estanque (Solo si tiene permiso) */}
-        {(esAdmin || perfilActual?.permisos?.gestionarEstanques) ? (
+        {(esAdmin || verificarPermiso(perfilActual, 'gestionarEstanques')) ? (
           <form onSubmit={handleAgregarEstanque} className="pt-3 border-t border-slate-100 flex flex-wrap items-end gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -720,7 +749,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
                 <input
                   type="number"
                   step="0.5"
-                  disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                  disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                   value={rangos.temperaturaMin}
                   onChange={(e) => setRangos({ ...rangos, temperaturaMin: Number(e.target.value) })}
                   className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -731,7 +760,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
                 <input
                   type="number"
                   step="0.5"
-                  disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                  disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                   value={rangos.temperaturaMax}
                   onChange={(e) => setRangos({ ...rangos, temperaturaMax: Number(e.target.value) })}
                   className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -748,7 +777,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
               <input
                 type="number"
                 step="0.1"
-                disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                 value={rangos.oxigenoMin}
                 onChange={(e) => setRangos({ ...rangos, oxigenoMin: Number(e.target.value) })}
                 className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -765,7 +794,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
                 <input
                   type="number"
                   step="0.1"
-                  disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                  disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                   value={rangos.phMin}
                   onChange={(e) => setRangos({ ...rangos, phMin: Number(e.target.value) })}
                   className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -776,7 +805,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
                 <input
                   type="number"
                   step="0.1"
-                  disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                  disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                   value={rangos.phMax}
                   onChange={(e) => setRangos({ ...rangos, phMax: Number(e.target.value) })}
                   className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -793,7 +822,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
               <input
                 type="number"
                 step="0.1"
-                disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                 value={rangos.amonioMax}
                 onChange={(e) => setRangos({ ...rangos, amonioMax: Number(e.target.value) })}
                 className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -809,7 +838,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
               <input
                 type="number"
                 step="0.01"
-                disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                 value={rangos.nitritosMax}
                 onChange={(e) => setRangos({ ...rangos, nitritosMax: Number(e.target.value) })}
                 className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -826,7 +855,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
                 <input
                   type="number"
                   step="1"
-                  disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                  disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                   value={rangos.secchiMin}
                   onChange={(e) => setRangos({ ...rangos, secchiMin: Number(e.target.value) })}
                   className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -837,7 +866,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
                 <input
                   type="number"
                   step="1"
-                  disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+                  disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
                   value={rangos.secchiMax}
                   onChange={(e) => setRangos({ ...rangos, secchiMax: Number(e.target.value) })}
                   className="w-full px-2 py-1 text-xs border border-slate-300 rounded"
@@ -865,7 +894,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
             <label className="block text-[11px] font-medium text-slate-700 mb-1">Energía (kcal)</label>
             <input
               type="number"
-              disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+              disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
               value={ficha.energiaKcal}
               onChange={(e) => setFicha({ ...ficha, energiaKcal: Number(e.target.value) })}
               className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
@@ -876,7 +905,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
             <input
               type="number"
               step="0.1"
-              disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+              disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
               value={ficha.proteinaG}
               onChange={(e) => setFicha({ ...ficha, proteinaG: Number(e.target.value) })}
               className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
@@ -887,7 +916,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
             <input
               type="number"
               step="0.1"
-              disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+              disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
               value={ficha.grasaTotalG}
               onChange={(e) => setFicha({ ...ficha, grasaTotalG: Number(e.target.value) })}
               className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
@@ -898,7 +927,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
             <input
               type="number"
               step="0.1"
-              disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+              disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
               value={ficha.carbohidratosG}
               onChange={(e) => setFicha({ ...ficha, carbohidratosG: Number(e.target.value) })}
               className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
@@ -908,7 +937,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
             <label className="block text-[11px] font-medium text-slate-700 mb-1">Colesterol (mg)</label>
             <input
               type="number"
-              disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+              disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
               value={ficha.colesterolMg}
               onChange={(e) => setFicha({ ...ficha, colesterolMg: Number(e.target.value) })}
               className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
@@ -918,7 +947,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
             <label className="block text-[11px] font-medium text-slate-700 mb-1">Sodio (mg)</label>
             <input
               type="number"
-              disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+              disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
               value={ficha.sodioMg}
               onChange={(e) => setFicha({ ...ficha, sodioMg: Number(e.target.value) })}
               className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
@@ -931,7 +960,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
             <label className="block text-[11px] font-medium text-slate-700 mb-1">Fuente Referencial</label>
             <input
               type="text"
-              disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+              disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
               value={ficha.fuente}
               onChange={(e) => setFicha({ ...ficha, fuente: e.target.value })}
               className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
@@ -941,7 +970,7 @@ export const ConfiguracionTab: React.FC<ConfiguracionTabProps> = ({
             <label className="block text-[11px] font-medium text-slate-700 mb-1">Notas al pie</label>
             <input
               type="text"
-              disabled={!esAdmin && !perfilActual?.permisos?.gestionarConfiguracion}
+              disabled={!esAdmin && !verificarPermiso(perfilActual, 'gestionarConfiguracion')}
               value={ficha.notas}
               onChange={(e) => setFicha({ ...ficha, notas: e.target.value })}
               className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"

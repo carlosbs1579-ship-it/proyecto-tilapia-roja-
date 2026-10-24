@@ -1,9 +1,11 @@
 import { doc, getDoc, setDoc, updateDoc, collection, onSnapshot } from 'firebase/firestore';
 import { User } from 'firebase/auth';
 import { db } from '../firebase/firebaseConfig';
-import { UsuarioPerfil, PermisosUsuario, ADMIN_MASTER_EMAIL } from '../types';
+import { UsuarioPerfil, PermisosUsuario, RolUsuario, ADMIN_MASTER_EMAIL } from '../types';
+import { GRANJA_ID_PREDETERMINADA } from '../utils/constants';
 
-const USUARIOS_LOCAL_KEY = 'cultivos_lore_usuarios_db';
+// Los perfiles operativos viven únicamente en Firestore, en usuarios/{uid}, donde uid es el UID
+// real de Firebase Authentication. Ya no se usan copias en localStorage.
 
 export const PERMISOS_DEFAULT_ADMIN: PermisosUsuario = {
   crearLotes: true,
@@ -23,38 +25,31 @@ export const PERMISOS_DEFAULT_OPERARIO: PermisosUsuario = {
   administrarUsuarios: false,
 };
 
-type UsuariosListener = (usuarios: UsuarioPerfil[]) => void;
-const listenersUsuarios: Set<UsuariosListener> = new Set();
-
-export function getUsuariosLocales(): UsuarioPerfil[] {
-  try {
-    const raw = localStorage.getItem(USUARIOS_LOCAL_KEY);
-    if (!raw) {
-      // Pre-poblar al Administrador Maestro Carlos
-      const adminCarlos: UsuarioPerfil = {
-        uid: 'admin_carlos_master',
-        email: ADMIN_MASTER_EMAIL,
-        displayName: 'Carlos (Administrador Maestro)',
-        cargo: 'Administrador Principal / Propietario',
-        estado: 'activo',
-        permisos: PERMISOS_DEFAULT_ADMIN,
-        creadoEn: new Date().toISOString(),
-        actualizadoEn: new Date().toISOString(),
-        autorizadoPor: ADMIN_MASTER_EMAIL
-      };
-      return [adminCarlos];
-    }
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+/**
+ * Indica si un ID de documento corresponde a un perfil creado por las sesiones simuladas de
+ * versiones anteriores (sin cuenta real en Firebase Authentication)
+ */
+function esPerfilSimulado(uid: string): boolean {
+  return uid === 'admin_carlos_master' || uid.startsWith('op_');
 }
 
-export function guardarUsuariosLocales(usuarios: UsuarioPerfil[]): void {
-  try {
-    localStorage.setItem(USUARIOS_LOCAL_KEY, JSON.stringify(usuarios));
-  } catch {}
-  listenersUsuarios.forEach((fn) => fn(usuarios));
+/**
+ * Completa en memoria los campos que los perfiles antiguos no tienen (rol, granjaId, permisos)
+ */
+function normalizarPerfil(data: Partial<UsuarioPerfil>, uid: string): UsuarioPerfil {
+  const email = data.email || '';
+  return {
+    ...data,
+    uid,
+    email,
+    rol: data.rol || (esAdminMaestro(email) ? 'admin' : 'operario'),
+    granjaId: data.granjaId || GRANJA_ID_PREDETERMINADA,
+    cargo: data.cargo || '',
+    estado: data.estado || 'pendiente',
+    permisos: { ...PERMISOS_DEFAULT_OPERARIO, ...(data.permisos || {}) },
+    creadoEn: data.creadoEn || '',
+    actualizadoEn: data.actualizadoEn || ''
+  };
 }
 
 /**
@@ -66,6 +61,15 @@ export function esAdminMaestro(email?: string | null): boolean {
 }
 
 /**
+ * Indica si el perfil puede administrar usuarios y configuración de la granja
+ */
+export function esAdministrador(perfil: UsuarioPerfil | null): boolean {
+  if (!perfil) return false;
+  if (esAdminMaestro(perfil.email)) return true;
+  return perfil.rol === 'admin' && perfil.estado === 'activo';
+}
+
+/**
  * Verifica si un perfil cuenta con un permiso específico
  */
 export function verificarPermiso(
@@ -73,158 +77,125 @@ export function verificarPermiso(
   permiso: keyof PermisosUsuario
 ): boolean {
   if (!perfil) return false;
-  if (esAdminMaestro(perfil.email)) return true;
-  if (perfil.estado !== 'activo') return false;
+  if (esAdministrador(perfil)) return true;
+  if (perfil.estado !== 'activo' || perfil.rol === 'consulta') return false;
   return Boolean(perfil.permisos && perfil.permisos[permiso]);
 }
 
 /**
- * Sincroniza o crea el perfil del usuario al iniciar sesión
+ * Obtiene o crea el perfil operativo del usuario autenticado. Un usuario nuevo queda
+ * "pendiente" y sin permisos hasta que un administrador lo autorice.
+ * Si Firestore no responde, se lanza el error: el usuario no recibe permisos supuestos.
  */
 export async function sincronizarPerfilUsuario(user: User): Promise<UsuarioPerfil> {
   const userRef = doc(db, 'usuarios', user.uid);
   const esAdmin = esAdminMaestro(user.email);
   const fechaIso = new Date().toISOString();
 
-  let perfil: UsuarioPerfil = {
+  const snap = await getDoc(userRef);
+
+  if (snap.exists()) {
+    const perfil = normalizarPerfil(snap.data() as Partial<UsuarioPerfil>, user.uid);
+    if (!esAdmin) return perfil;
+
+    // El Administrador Maestro siempre conserva el rol de administrador y todos los permisos
+    const perfilAdmin: UsuarioPerfil = {
+      ...perfil,
+      rol: 'admin',
+      estado: 'activo',
+      permisos: PERMISOS_DEFAULT_ADMIN,
+      actualizadoEn: fechaIso
+    };
+    await updateDoc(userRef, {
+      rol: perfilAdmin.rol,
+      granjaId: perfilAdmin.granjaId,
+      estado: perfilAdmin.estado,
+      permisos: perfilAdmin.permisos,
+      actualizadoEn: fechaIso
+    });
+    return perfilAdmin;
+  }
+
+  const nuevoPerfil: UsuarioPerfil = {
     uid: user.uid,
-    email: user.email || 'operario@cultivoslore.com',
+    email: user.email || '',
     displayName: user.displayName || user.email?.split('@')[0] || (esAdmin ? 'Carlos' : 'Operario'),
+    rol: esAdmin ? 'admin' : 'operario',
+    granjaId: GRANJA_ID_PREDETERMINADA,
     cargo: esAdmin ? 'Administrador Principal / Propietario' : 'Operario en espera de asignación',
     estado: esAdmin ? 'activo' : 'pendiente',
     permisos: esAdmin ? PERMISOS_DEFAULT_ADMIN : PERMISOS_DEFAULT_OPERARIO,
     creadoEn: fechaIso,
     actualizadoEn: fechaIso,
-    autorizadoPor: esAdmin ? ADMIN_MASTER_EMAIL : undefined
+    ...(esAdmin ? { autorizadoPor: ADMIN_MASTER_EMAIL } : {})
   };
-
-  // 1. Guardar y recuperar de almacenamiento local
-  const usuariosLocales = getUsuariosLocales();
-  const existenteLocal = usuariosLocales.find((u) => u.uid === user.uid || u.email === user.email);
-  if (existenteLocal) {
-    perfil = {
-      ...existenteLocal,
-      uid: user.uid,
-      // Si es Carlos, asegurar siempre permisos completos
-      permisos: esAdmin ? PERMISOS_DEFAULT_ADMIN : existenteLocal.permisos,
-      estado: esAdmin ? 'activo' : existenteLocal.estado,
-      cargo: esAdmin ? (existenteLocal.cargo || 'Administrador Principal') : existenteLocal.cargo
-    };
-  }
-
-  const listaActualizada = [
-    perfil,
-    ...usuariosLocales.filter((u) => u.uid !== perfil.uid && u.email !== perfil.email)
-  ];
-  guardarUsuariosLocales(listaActualizada);
-
-  // 2. Intentar guardar en Firestore en segundo plano
-  try {
-    const snap = await getDoc(userRef);
-    if (!snap.exists()) {
-      await setDoc(userRef, perfil);
-    } else {
-      if (esAdmin) {
-        await updateDoc(userRef, {
-          estado: 'activo',
-          permisos: PERMISOS_DEFAULT_ADMIN,
-          actualizadoEn: fechaIso
-        });
-      }
-    }
-  } catch (err) {
-    console.warn('Perfil sincronizado localmente (Firestore no disponible):', err);
-  }
-
-  return perfil;
+  await setDoc(userRef, nuevoPerfil);
+  return nuevoPerfil;
 }
 
 /**
- * Escucha la lista completa de perfiles de usuario en tiempo real
+ * Escucha en tiempo real los perfiles de usuario de la granja
  */
 export function escucharUsuarios(
   onUpdate: (usuarios: UsuarioPerfil[]) => void,
-  onError?: (error: any) => void
+  onError?: (error: any) => void,
+  granjaId: string = GRANJA_ID_PREDETERMINADA
 ): () => void {
-  // Emitir de inmediato la lista local
-  onUpdate(getUsuariosLocales());
-  listenersUsuarios.add(onUpdate);
-
-  const colRef = collection(db, 'usuarios');
-  const unsubFs = onSnapshot(
-    colRef,
+  return onSnapshot(
+    collection(db, 'usuarios'),
     (snapshot) => {
-      const listaFs: UsuarioPerfil[] = [];
+      const lista: UsuarioPerfil[] = [];
       snapshot.forEach((d) => {
-        listaFs.push(d.data() as UsuarioPerfil);
+        // Los perfiles de sesiones simuladas no corresponden a ninguna cuenta real; no se muestran
+        if (esPerfilSimulado(d.id)) return;
+        const perfil = normalizarPerfil(d.data() as Partial<UsuarioPerfil>, d.id);
+        if (perfil.granjaId === granjaId) {
+          lista.push(perfil);
+        }
       });
-
-      if (listaFs.length > 0) {
-        const locales = getUsuariosLocales();
-        const mapa = new Map<string, UsuarioPerfil>();
-        locales.forEach((u) => mapa.set(u.email, u));
-        listaFs.forEach((u) => mapa.set(u.email, u));
-
-        const combinados = Array.from(mapa.values());
-        combinados.sort((a, b) => {
-          if (esAdminMaestro(a.email)) return -1;
-          if (esAdminMaestro(b.email)) return 1;
-          return a.email.localeCompare(b.email);
-        });
-        guardarUsuariosLocales(combinados);
-      }
+      lista.sort((a, b) => {
+        if (esAdminMaestro(a.email)) return -1;
+        if (esAdminMaestro(b.email)) return 1;
+        return a.email.localeCompare(b.email);
+      });
+      onUpdate(lista);
     },
     (err) => {
-      console.warn('Firestore usuarios en modo contingencia local:', err?.message || err);
-      onUpdate(getUsuariosLocales());
+      console.error('Error escuchando perfiles de usuario en Firestore:', err);
+      if (onError) onError(err);
     }
   );
-
-  return () => {
-    listenersUsuarios.delete(onUpdate);
-    unsubFs();
-  };
 }
 
 /**
- * Permite a Carlos modificar el nombre de la posición, estado y permisos de un operario
+ * Permite a un administrador modificar el rol, cargo, estado y permisos de un usuario
  */
 export async function actualizarPerfilOperario(
   uid: string,
   datos: {
+    rol: RolUsuario;
     cargo: string;
     estado: 'activo' | 'pendiente' | 'inactivo';
     permisos: PermisosUsuario;
   },
-  adminEmail: string
+  adminEmail: string,
+  granjaId: string = GRANJA_ID_PREDETERMINADA
 ): Promise<void> {
-  const usuariosLocales = getUsuariosLocales();
-  const index = usuariosLocales.findIndex((u) => u.uid === uid);
-  const fechaIso = new Date().toISOString();
+  // Un usuario de consulta no puede tener permisos de escritura; un administrador los tiene todos
+  const permisos =
+    datos.rol === 'consulta'
+      ? PERMISOS_DEFAULT_OPERARIO
+      : datos.rol === 'admin'
+      ? PERMISOS_DEFAULT_ADMIN
+      : datos.permisos;
 
-  if (index !== -1) {
-    usuariosLocales[index] = {
-      ...usuariosLocales[index],
-      cargo: datos.cargo.trim(),
-      estado: datos.estado,
-      permisos: datos.permisos,
-      autorizadoPor: adminEmail,
-      actualizadoEn: fechaIso
-    };
-    guardarUsuariosLocales(usuariosLocales);
-  }
-
-  // Intentar sincronizar en Firestore
-  try {
-    const userRef = doc(db, 'usuarios', uid);
-    await updateDoc(userRef, {
-      cargo: datos.cargo.trim(),
-      estado: datos.estado,
-      permisos: datos.permisos,
-      autorizadoPor: adminEmail,
-      actualizadoEn: fechaIso
-    });
-  } catch (error) {
-    console.warn('Permisos de operario actualizados localmente:', error);
-  }
+  await updateDoc(doc(db, 'usuarios', uid), {
+    rol: datos.rol,
+    granjaId,
+    cargo: datos.cargo.trim(),
+    estado: datos.estado,
+    permisos,
+    autorizadoPor: adminEmail,
+    actualizadoEn: new Date().toISOString()
+  });
 }

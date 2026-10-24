@@ -130,10 +130,15 @@ export interface PermisosUsuario {
   administrarUsuarios: boolean; // Otorgar permisos y modificar cargos
 }
 
+// admin: gestiona usuarios y configuración; operario: trabaja según sus permisos; consulta: solo lectura
+export type RolUsuario = 'admin' | 'operario' | 'consulta';
+
 export interface UsuarioPerfil {
-  uid: string;
+  uid: string; // UID real de Firebase Authentication (coincide con el ID del documento)
   email: string;
   displayName?: string;
+  rol: RolUsuario;
+  granjaId: string; // Granja a la que pertenece el usuario
   cargo: string; // Nombre personalizado de la posición (ej: "Biólogo de Campo", "Jefe de Planta", etc.)
   estado: 'activo' | 'pendiente' | 'inactivo';
   permisos: PermisosUsuario;

@@ -26,7 +26,7 @@ import { cerrarLote, escucharLoteIndividual } from '../services/lotesService';
 import { previsualizarPdfLote, generarYSubirPdfLote, descargarPdfLoteLocal } from '../services/pdfService';
 import { formatearFechaColombia } from '../utils/constants';
 import { evaluarParametroAgua } from '../services/calculosService';
-import { esAdminMaestro } from '../services/usuariosService';
+import { esAdminMaestro, verificarPermiso } from '../services/usuariosService';
 
 interface LoteDetailModalProps {
   isOpen: boolean;
@@ -50,8 +50,8 @@ export const LoteDetailModal: React.FC<LoteDetailModalProps> = ({
   onAbrirVistaPublica
 }) => {
   const esAdmin = esAdminMaestro(userEmail);
-  const puedeRegistrar = esAdmin || Boolean(perfilActual?.estado === 'activo' && perfilActual?.permisos?.registrarEventos);
-  const puedeCerrar = esAdmin || Boolean(perfilActual?.estado === 'activo' && perfilActual?.permisos?.cerrarLotes);
+  const puedeRegistrar = esAdmin || verificarPermiso(perfilActual, 'registrarEventos');
+  const puedeCerrar = esAdmin || verificarPermiso(perfilActual, 'cerrarLotes');
 
   const [lote, setLote] = useState<Lote>(loteInicial);
   const [modalEventoOpen, setModalEventoOpen] = useState(false);

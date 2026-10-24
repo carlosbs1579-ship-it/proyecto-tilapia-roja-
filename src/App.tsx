@@ -45,6 +45,7 @@ export default function App() {
   const [usuario, setUsuario] = useState<UsuarioSesion | null>(null);
 
   const [perfilUsuario, setPerfilUsuario] = useState<UsuarioPerfil | null>(null);
+  const [errorPerfil, setErrorPerfil] = useState<string | null>(null);
   const [authCargando, setAuthCargando] = useState(true);
 
   const [config, setConfig] = useState<ConfiguracionGeneral>(CONFIG_DEFAULT);
@@ -85,6 +86,7 @@ export default function App() {
       if (!fbUser) {
         setUsuario(null);
         setPerfilUsuario(null);
+        setErrorPerfil(null);
         setAuthCargando(false);
         return;
       }
@@ -98,9 +100,12 @@ export default function App() {
       try {
         const perfil = await sincronizarPerfilUsuario(fbUser);
         setPerfilUsuario(perfil);
+        setErrorPerfil(null);
       } catch (err) {
+        // Sin perfil operativo válido el usuario queda sin permisos de escritura
         console.warn('Sincronización perfil:', err);
         setPerfilUsuario(null);
+        setErrorPerfil('No fue posible cargar tu perfil operativo. Puedes consultar los lotes, pero no crear ni registrar eventos hasta que se resuelva.');
       }
     });
     return () => unsubscribe();
@@ -252,6 +257,14 @@ export default function App() {
               <strong>Perfil Pendiente:</strong> Tu cuenta ({usuario.email}) ha sido registrada pero aún no ha sido autorizada por Carlos (<strong>carlosbs1579@gmail.com</strong>). Tan pronto Carlos te asigne tu posición y permisos en la web, podrás crear lotes y cargar mediciones.
             </span>
           </div>
+        </div>
+      )}
+
+      {/* ERROR AL CARGAR EL PERFIL OPERATIVO */}
+      {usuario && errorPerfil && (
+        <div className="bg-red-600 text-white px-4 py-2 text-xs flex items-center justify-center space-x-2">
+          <AlertCircle className="w-4 h-4" />
+          <span>{errorPerfil}</span>
         </div>
       )}
 
