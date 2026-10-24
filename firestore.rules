@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Regla de denegación predeterminada
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isMasterAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'carlosbs1579@gmail.com'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    match /lotes/{codigo} {
+      // Consulta pública 100% abierta para escaneo de QR y trazabilidad desde cualquier smartphone
+      allow read: if true;
+      allow create: if isValidId(codigo);
+      allow update: if isValidId(codigo);
+      allow delete: if false;
+    }
+
+    match /contadores/{contadorId} {
+      allow read, write: if isValidId(contadorId);
+    }
+
+    match /configuracion/{docId} {
+      allow read: if true;
+      allow write: if isValidId(docId);
+    }
+
+    match /usuarios/{userId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if isMasterAdmin() || isSignedIn();
+      allow delete: if false;
+    }
+  }
+}

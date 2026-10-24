@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Reglas para Cloud Storage de Cultivos Loré
+    match /lotes/{fileName} {
+      // Lectura pública para escanear el código QR y abrir el certificado PDF
+      allow read: if true;
+      // Escritura permitida solo a operarios autenticados y únicamente para archivos PDF
+      allow write: if request.auth != null
+                   && request.resource.contentType == 'application/pdf';
+    }
+  }
+}
