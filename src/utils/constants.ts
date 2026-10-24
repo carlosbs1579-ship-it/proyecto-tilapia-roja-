@@ -5,6 +5,9 @@ export const MODALIDAD_FIJA = 'Tilapia Pro';
 export const ORIGEN_FIJO = 'Cultivos Loré, Turbaco, Bolívar';
 export const ZONA_HORARIA = 'America/Bogota';
 
+// Granja a la que pertenecen los lotes. Todos los usuarios autorizados de la granja comparten sus lotes.
+export const GRANJA_ID_PREDETERMINADA = 'cultivos-lore';
+
 export const CONFIG_DEFAULT: ConfiguracionGeneral = {
   estanques: [
     { codigo: 'E1', nombre: 'Estanque 1 (Tierra)', volumenM3: 250 },

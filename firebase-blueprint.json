@@ -23,7 +23,9 @@
         "pdfUrl": { "type": "string", "description": "URL pública directa del PDF" },
         "versionPdf": { "type": "number", "description": "Número de versión incremental del PDF" },
         "pdfActualizadoEn": { "type": "string", "description": "Timestamp ISO de última actualización del PDF" },
+        "granjaId": { "type": "string", "description": "Granja a la que pertenece el lote; sus miembros autorizados lo comparten" },
         "creadoPor": { "type": "string", "description": "Email del operario que creó el lote" },
+        "creadoPorUid": { "type": "string", "description": "UID de Firebase Auth del operario que creó el lote" },
         "creadoEn": { "type": "string", "description": "Timestamp ISO o Firestore de creación" },
         "actualizadoEn": { "type": "string", "description": "Timestamp ISO o Firestore de última actualización" }
       },
@@ -60,6 +62,8 @@
         "uid": { "type": "string", "description": "ID de usuario de Firebase Auth" },
         "email": { "type": "string", "description": "Correo del operario" },
         "displayName": { "type": "string", "description": "Nombre del operario" },
+        "rol": { "type": "string", "enum": ["admin", "operario", "consulta"], "description": "Rol del usuario en la granja" },
+        "granjaId": { "type": "string", "description": "Granja a la que pertenece el usuario" },
         "cargo": { "type": "string", "description": "Posición asignada por el administrador" },
         "estado": { "type": "string", "enum": ["activo", "pendiente", "inactivo"], "description": "Estado de autorización" },
         "permisos": { "type": "object", "description": "Permisos específicos otorgados" },

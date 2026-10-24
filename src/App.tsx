@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDocFromServer } from 'firebase/firestore';
 import { auth, db } from './firebase/firebaseConfig';
-import { Lote, ConfiguracionGeneral, UsuarioPerfil, ADMIN_MASTER_EMAIL } from './types';
+import { Lote, ConfiguracionGeneral, UsuarioPerfil } from './types';
 import { CONFIG_DEFAULT } from './utils/constants';
 import { escucharConfiguracion } from './services/configService';
 import { escucharLotes } from './services/lotesService';
-import { sincronizarPerfilUsuario, esAdminMaestro } from './services/usuariosService';
+import { sincronizarPerfilUsuario, esAdminMaestro, esMiembroActivo } from './services/usuariosService';
 
 import { Navbar } from './components/Navbar';
 import { DashboardTab } from './components/DashboardTab';
@@ -20,7 +20,8 @@ import { QrModal } from './components/QrModal';
 import { PublicTraceabilityView } from './components/PublicTraceabilityView';
 import { AlertCircle, Lock, Crown, ShieldAlert } from 'lucide-react';
 
-const SESION_STORAGE_KEY = 'cultivos_lore_sesion_activa';
+// Clave donde versiones anteriores guardaban una sesión simulada; solo se usa para borrarla
+const SESION_STORAGE_KEY_ANTIGUA = 'cultivos_lore_sesion_activa';
 
 interface UsuarioSesion {
   uid: string;
@@ -40,24 +41,12 @@ export default function App() {
     return null;
   });
 
-  // Inicializar con la sesión activa persistida o Carlos por defecto
-  const [usuario, setUsuario] = useState<User | UsuarioSesion | null>(() => {
-    try {
-      const sesionGuardada = localStorage.getItem(SESION_STORAGE_KEY);
-      if (sesionGuardada) {
-        return JSON.parse(sesionGuardada);
-      }
-    } catch {}
-    // Si es Carlos, inicializar por defecto para acceso inmediato sin bloqueos
-    return {
-      uid: 'admin_carlos_master',
-      email: ADMIN_MASTER_EMAIL,
-      displayName: 'Carlos (Administrador Maestro)'
-    };
-  });
+  // La sesión la determina únicamente Firebase Authentication (ver onAuthStateChanged)
+  const [usuario, setUsuario] = useState<UsuarioSesion | null>(null);
 
   const [perfilUsuario, setPerfilUsuario] = useState<UsuarioPerfil | null>(null);
-  const [authCargando, setAuthCargando] = useState(false);
+  const [errorPerfil, setErrorPerfil] = useState<string | null>(null);
+  const [authCargando, setAuthCargando] = useState(true);
 
   const [config, setConfig] = useState<ConfiguracionGeneral>(CONFIG_DEFAULT);
   const [lotes, setLotes] = useState<Lote[]>([]);
@@ -86,38 +75,41 @@ export default function App() {
     testConnection();
   }, []);
 
-  // 2. Escuchar cambios de autenticación oficial de Firebase
+  // 2. Escuchar cambios de autenticación oficial de Firebase (única fuente de la sesión)
   useEffect(() => {
+    // Eliminar la sesión simulada que versiones anteriores guardaban en este navegador
+    try {
+      localStorage.removeItem(SESION_STORAGE_KEY_ANTIGUA);
+    } catch {}
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
-        const u = {
-          uid: fbUser.uid,
-          email: fbUser.email || '',
-          displayName: fbUser.displayName || fbUser.email?.split('@')[0] || ''
-        };
-        setUsuario(u);
-        try {
-          localStorage.setItem(SESION_STORAGE_KEY, JSON.stringify(u));
-          const perfil = await sincronizarPerfilUsuario(fbUser);
-          setPerfilUsuario(perfil);
-        } catch (err) {
-          console.warn('Sincronización perfil:', err);
-        }
+      if (!fbUser) {
+        setUsuario(null);
+        setPerfilUsuario(null);
+        setErrorPerfil(null);
+        setAuthCargando(false);
+        return;
+      }
+
+      setUsuario({
+        uid: fbUser.uid,
+        email: fbUser.email || '',
+        displayName: fbUser.displayName || fbUser.email?.split('@')[0] || ''
+      });
+      setAuthCargando(false);
+      try {
+        const perfil = await sincronizarPerfilUsuario(fbUser);
+        setPerfilUsuario(perfil);
+        setErrorPerfil(null);
+      } catch (err) {
+        // Sin perfil operativo válido el usuario queda sin permisos de escritura
+        console.warn('Sincronización perfil:', err);
+        setPerfilUsuario(null);
+        setErrorPerfil('No fue posible cargar tu perfil operativo. Puedes consultar los lotes, pero no crear ni registrar eventos hasta que se resuelva.');
       }
     });
     return () => unsubscribe();
   }, []);
-
-  // Sincronizar perfil cuando cambia el usuario (sea de Firebase o manual)
-  useEffect(() => {
-    if (usuario) {
-      sincronizarPerfilUsuario(usuario as User)
-        .then((p) => setPerfilUsuario(p))
-        .catch(console.warn);
-    } else {
-      setPerfilUsuario(null);
-    }
-  }, [usuario?.email]);
 
   // 3. Escuchar configuración en tiempo real
   useEffect(() => {
@@ -134,8 +126,17 @@ export default function App() {
     return () => unsubConfig();
   }, []);
 
-  // 4. Escuchar lotes en tiempo real
+  // 4. Escuchar en tiempo real los lotes de la granja, solo si el usuario es miembro activo
+  const granjaActiva = esMiembroActivo(perfilUsuario) ? perfilUsuario!.granjaId : null;
+
   useEffect(() => {
+    if (!granjaActiva) {
+      setLotes([]);
+      setLotesCargando(false);
+      setErrorConexion(null);
+      return;
+    }
+
     setLotesCargando(true);
     const unsubLotes = escucharLotes(
       (listaLotes) => {
@@ -154,29 +155,26 @@ export default function App() {
       (err) => {
         console.warn('Error escuchando lotes en Firestore:', err);
         setLotesCargando(false);
-      }
+        setErrorConexion(
+          err?.code === 'permission-denied'
+            ? 'No tienes permiso para consultar los lotes de la granja.'
+            : 'No fue posible conectar con la base de datos de lotes. Los datos mostrados pueden estar desactualizados.'
+        );
+      },
+      granjaActiva
     );
 
     return () => unsubLotes();
-  }, [usuario]);
+  }, [granjaActiva]);
 
   const handleCerrarSesion = async () => {
     try {
-      localStorage.removeItem(SESION_STORAGE_KEY);
       await signOut(auth);
-    } catch {}
+    } catch (err) {
+      console.warn('Error al cerrar sesión:', err);
+    }
     setUsuario(null);
     setPerfilUsuario(null);
-  };
-
-  const handleLoginManual = (userSession: UsuarioSesion) => {
-    setUsuario(userSession);
-    try {
-      localStorage.setItem(SESION_STORAGE_KEY, JSON.stringify(userSession));
-    } catch {}
-    sincronizarPerfilUsuario(userSession as any)
-      .then((p) => setPerfilUsuario(p))
-      .catch(console.warn);
   };
 
   const handleAbrirNuevoLote = () => {
@@ -227,7 +225,7 @@ export default function App() {
             <div className="flex items-center space-x-2">
               <Lock className="w-4 h-4 text-sky-400 shrink-0" />
               <span>
-                <strong>Modo Consulta:</strong> Para crear lotes o registrar eventos debes ingresar. Carlos (<strong>carlosbs1579@gmail.com</strong>) tiene acceso de Administrador Maestro.
+                <strong>Modo Consulta:</strong> Para ver los lotes de la granja, crear lotes o registrar eventos debes ingresar. Los lotes se pueden consultar uno a uno escaneando su código QR. Carlos (<strong>carlosbs1579@gmail.com</strong>) tiene acceso de Administrador Maestro.
               </span>
             </div>
             <button
@@ -266,9 +264,29 @@ export default function App() {
           <div className="max-w-7xl mx-auto flex items-center space-x-2">
             <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
             <span>
-              <strong>Perfil Pendiente:</strong> Tu cuenta ({usuario.email}) ha sido registrada pero aún no ha sido autorizada por Carlos (<strong>carlosbs1579@gmail.com</strong>). Tan pronto Carlos te asigne tu posición y permisos en la web, podrás crear lotes y cargar mediciones.
+              <strong>Perfil Pendiente:</strong> Tu cuenta ({usuario.email}) ha sido registrada pero aún no ha sido autorizada por Carlos (<strong>carlosbs1579@gmail.com</strong>). Tan pronto Carlos te asigne tu posición y permisos en la web, podrás ver los lotes de la granja, crear lotes y cargar mediciones.
             </span>
           </div>
+        </div>
+      )}
+
+      {/* BANNER 4: SI EL USUARIO FUE DESACTIVADO */}
+      {usuario && !esAdmin && perfilUsuario?.estado === 'inactivo' && (
+        <div className="bg-slate-200 border-b border-slate-300 px-4 py-2 text-xs text-slate-800">
+          <div className="max-w-7xl mx-auto flex items-center space-x-2">
+            <ShieldAlert className="w-4 h-4 text-slate-600 shrink-0" />
+            <span>
+              <strong>Cuenta inactiva:</strong> Tu cuenta ({usuario.email}) no tiene acceso a los lotes de la granja. Contacta al administrador si crees que es un error.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ERROR AL CARGAR EL PERFIL OPERATIVO */}
+      {usuario && errorPerfil && (
+        <div className="bg-red-600 text-white px-4 py-2 text-xs flex items-center justify-center space-x-2">
+          <AlertCircle className="w-4 h-4" />
+          <span>{errorPerfil}</span>
         </div>
       )}
 
@@ -313,7 +331,7 @@ export default function App() {
         {tabActiva === 'configuracion' && (
           <ConfiguracionTab
             config={config}
-            userEmail={usuario?.email || ADMIN_MASTER_EMAIL}
+            userEmail={usuario?.email || ''}
             perfilActual={perfilUsuario}
             onConfigActualizada={(nuevaConfig) => setConfig(nuevaConfig)}
           />
@@ -339,7 +357,6 @@ export default function App() {
       <AuthModal
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
-        onLoginManual={handleLoginManual}
       />
 
       {usuario && (
@@ -347,7 +364,7 @@ export default function App() {
           isOpen={nuevoLoteModalOpen}
           onClose={() => setNuevoLoteModalOpen(false)}
           config={config}
-          userEmail={usuario.email || ADMIN_MASTER_EMAIL}
+          userEmail={usuario.email}
           perfilActual={perfilUsuario}
           onLoteCreado={handleLoteCreado}
         />
@@ -359,7 +376,7 @@ export default function App() {
           onClose={() => setLoteDetalle(null)}
           loteInicial={loteDetalle}
           config={config}
-          userEmail={usuario?.email || ADMIN_MASTER_EMAIL}
+          userEmail={usuario?.email || ''}
           perfilActual={perfilUsuario}
           onLoteActualizado={(loteActualizado) => setLoteDetalle(loteActualizado)}
           onAbrirVistaPublica={(codigo) => {
