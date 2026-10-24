@@ -6,16 +6,15 @@ import {
   GoogleAuthProvider
 } from 'firebase/auth';
 import { auth } from '../firebase/firebaseConfig';
-import { X, Lock, Mail, AlertCircle, CheckCircle, Shield, Crown, Sparkles } from 'lucide-react';
-import { ADMIN_MASTER_EMAIL } from '../types';
+import { X, Lock, Mail, AlertCircle, CheckCircle, Shield } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onLoginManual?: (user: { uid: string; email: string; displayName: string }) => void;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginManual }) => {
+// La sesión se obtiene en App.tsx mediante onAuthStateChanged; este modal solo autentica con Firebase
+export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [esRegistro, setEsRegistro] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,21 +23,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginMa
   const [exitoMsg, setExitoMsg] = useState<string | null>(null);
 
   if (!isOpen) return null;
-
-  const handleAccesoDirectoCarlos = () => {
-    setErrorMsg(null);
-    setExitoMsg('Identificado como Carlos (Administrador Maestro). Accediendo...');
-    setTimeout(() => {
-      if (onLoginManual) {
-        onLoginManual({
-          uid: 'admin_carlos_master',
-          email: ADMIN_MASTER_EMAIL,
-          displayName: 'Carlos (Administrador Maestro)'
-        });
-      }
-      onClose();
-    }, 400);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,25 +46,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginMa
     } catch (err: any) {
       console.warn('Firebase Auth intento:', err?.code || err?.message);
 
-      // Si el proveedor de correo y contraseña no ha sido activado en Firebase Console,
-      // habilitar el acceso directo para no bloquear la operatividad
-      if (err.code === 'auth/operation-not-allowed' || err.code === 'auth/admin-restricted-operation') {
-        if (onLoginManual) {
-          onLoginManual({
-            uid: `op_${emailLimpio.replace(/[^a-zA-Z0-9]/g, '_')}`,
-            email: emailLimpio,
-            displayName: emailLimpio.split('@')[0]
-          });
-          setExitoMsg(`Sesión iniciada con éxito para ${emailLimpio}.`);
-          setTimeout(() => {
-            onClose();
-          }, 600);
-          return;
-        }
-      }
-
       let mensaje = 'Error al procesar la autenticación.';
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      if (err.code === 'auth/operation-not-allowed' || err.code === 'auth/admin-restricted-operation') {
+        mensaje = 'El acceso con correo y contraseña no está habilitado en Firebase. Usa tu cuenta de Google o contacta al administrador.';
+      } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         mensaje = 'Correo o contraseña incorrectos.';
       } else if (err.code === 'auth/email-already-in-use') {
         mensaje = 'Este correo ya se encuentra registrado. Selecciona "Iniciar sesión".';
@@ -103,15 +72,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginMa
     setCargando(true);
     try {
       const provider = new GoogleAuthProvider();
-      const res = await signInWithPopup(auth, provider);
+      // Pedir siempre que se elija la cuenta, para no entrar automáticamente con la cuenta principal del navegador
+      provider.setCustomParameters({ prompt: 'select_account' });
+      await signInWithPopup(auth, provider);
       setExitoMsg('Sesión iniciada con Google.');
-      if (onLoginManual && res.user) {
-        onLoginManual({
-          uid: res.user.uid,
-          email: res.user.email || '',
-          displayName: res.user.displayName || res.user.email?.split('@')[0] || ''
-        });
-      }
       setTimeout(() => {
         onClose();
       }, 600);
@@ -148,20 +112,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginMa
           <p className="text-xs text-slate-600 mb-4">
             Solo el personal autorizado de <strong>Cultivos Loré</strong> puede registrar lotes, registrar eventos y cerrar ciclos de trazabilidad.
           </p>
-
-          {/* BOTÓN DE ACCESO DIRECTO ADMINISTRADOR CARLOS */}
-          <button
-            type="button"
-            onClick={handleAccesoDirectoCarlos}
-            disabled={cargando}
-            className="w-full flex items-center justify-between py-2.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-lg text-xs font-bold shadow-md shadow-amber-500/20 transition-all mb-4"
-          >
-            <div className="flex items-center space-x-2">
-              <Crown className="w-4 h-4 text-amber-200" />
-              <span>Acceso Administrador Maestro (Carlos)</span>
-            </div>
-            <Sparkles className="w-4 h-4 text-amber-200" />
-          </button>
 
           {errorMsg && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-2 text-red-700 text-xs">

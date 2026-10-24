@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDocFromServer } from 'firebase/firestore';
 import { auth, db } from './firebase/firebaseConfig';
-import { Lote, ConfiguracionGeneral, UsuarioPerfil, ADMIN_MASTER_EMAIL } from './types';
+import { Lote, ConfiguracionGeneral, UsuarioPerfil } from './types';
 import { CONFIG_DEFAULT } from './utils/constants';
 import { escucharConfiguracion } from './services/configService';
 import { escucharLotes } from './services/lotesService';
@@ -20,7 +20,8 @@ import { QrModal } from './components/QrModal';
 import { PublicTraceabilityView } from './components/PublicTraceabilityView';
 import { AlertCircle, Lock, Crown, ShieldAlert } from 'lucide-react';
 
-const SESION_STORAGE_KEY = 'cultivos_lore_sesion_activa';
+// Clave donde versiones anteriores guardaban una sesión simulada; solo se usa para borrarla
+const SESION_STORAGE_KEY_ANTIGUA = 'cultivos_lore_sesion_activa';
 
 interface UsuarioSesion {
   uid: string;
@@ -40,24 +41,11 @@ export default function App() {
     return null;
   });
 
-  // Inicializar con la sesión activa persistida o Carlos por defecto
-  const [usuario, setUsuario] = useState<User | UsuarioSesion | null>(() => {
-    try {
-      const sesionGuardada = localStorage.getItem(SESION_STORAGE_KEY);
-      if (sesionGuardada) {
-        return JSON.parse(sesionGuardada);
-      }
-    } catch {}
-    // Si es Carlos, inicializar por defecto para acceso inmediato sin bloqueos
-    return {
-      uid: 'admin_carlos_master',
-      email: ADMIN_MASTER_EMAIL,
-      displayName: 'Carlos (Administrador Maestro)'
-    };
-  });
+  // La sesión la determina únicamente Firebase Authentication (ver onAuthStateChanged)
+  const [usuario, setUsuario] = useState<UsuarioSesion | null>(null);
 
   const [perfilUsuario, setPerfilUsuario] = useState<UsuarioPerfil | null>(null);
-  const [authCargando, setAuthCargando] = useState(false);
+  const [authCargando, setAuthCargando] = useState(true);
 
   const [config, setConfig] = useState<ConfiguracionGeneral>(CONFIG_DEFAULT);
   const [lotes, setLotes] = useState<Lote[]>([]);
@@ -86,38 +74,37 @@ export default function App() {
     testConnection();
   }, []);
 
-  // 2. Escuchar cambios de autenticación oficial de Firebase
+  // 2. Escuchar cambios de autenticación oficial de Firebase (única fuente de la sesión)
   useEffect(() => {
+    // Eliminar la sesión simulada que versiones anteriores guardaban en este navegador
+    try {
+      localStorage.removeItem(SESION_STORAGE_KEY_ANTIGUA);
+    } catch {}
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
-        const u = {
-          uid: fbUser.uid,
-          email: fbUser.email || '',
-          displayName: fbUser.displayName || fbUser.email?.split('@')[0] || ''
-        };
-        setUsuario(u);
-        try {
-          localStorage.setItem(SESION_STORAGE_KEY, JSON.stringify(u));
-          const perfil = await sincronizarPerfilUsuario(fbUser);
-          setPerfilUsuario(perfil);
-        } catch (err) {
-          console.warn('Sincronización perfil:', err);
-        }
+      if (!fbUser) {
+        setUsuario(null);
+        setPerfilUsuario(null);
+        setAuthCargando(false);
+        return;
+      }
+
+      setUsuario({
+        uid: fbUser.uid,
+        email: fbUser.email || '',
+        displayName: fbUser.displayName || fbUser.email?.split('@')[0] || ''
+      });
+      setAuthCargando(false);
+      try {
+        const perfil = await sincronizarPerfilUsuario(fbUser);
+        setPerfilUsuario(perfil);
+      } catch (err) {
+        console.warn('Sincronización perfil:', err);
+        setPerfilUsuario(null);
       }
     });
     return () => unsubscribe();
   }, []);
-
-  // Sincronizar perfil cuando cambia el usuario (sea de Firebase o manual)
-  useEffect(() => {
-    if (usuario) {
-      sincronizarPerfilUsuario(usuario as User)
-        .then((p) => setPerfilUsuario(p))
-        .catch(console.warn);
-    } else {
-      setPerfilUsuario(null);
-    }
-  }, [usuario?.email]);
 
   // 3. Escuchar configuración en tiempo real
   useEffect(() => {
@@ -167,21 +154,12 @@ export default function App() {
 
   const handleCerrarSesion = async () => {
     try {
-      localStorage.removeItem(SESION_STORAGE_KEY);
       await signOut(auth);
-    } catch {}
+    } catch (err) {
+      console.warn('Error al cerrar sesión:', err);
+    }
     setUsuario(null);
     setPerfilUsuario(null);
-  };
-
-  const handleLoginManual = (userSession: UsuarioSesion) => {
-    setUsuario(userSession);
-    try {
-      localStorage.setItem(SESION_STORAGE_KEY, JSON.stringify(userSession));
-    } catch {}
-    sincronizarPerfilUsuario(userSession as any)
-      .then((p) => setPerfilUsuario(p))
-      .catch(console.warn);
   };
 
   const handleAbrirNuevoLote = () => {
@@ -318,7 +296,7 @@ export default function App() {
         {tabActiva === 'configuracion' && (
           <ConfiguracionTab
             config={config}
-            userEmail={usuario?.email || ADMIN_MASTER_EMAIL}
+            userEmail={usuario?.email || ''}
             perfilActual={perfilUsuario}
             onConfigActualizada={(nuevaConfig) => setConfig(nuevaConfig)}
           />
@@ -344,7 +322,6 @@ export default function App() {
       <AuthModal
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
-        onLoginManual={handleLoginManual}
       />
 
       {usuario && (
@@ -352,7 +329,7 @@ export default function App() {
           isOpen={nuevoLoteModalOpen}
           onClose={() => setNuevoLoteModalOpen(false)}
           config={config}
-          userEmail={usuario.email || ADMIN_MASTER_EMAIL}
+          userEmail={usuario.email}
           perfilActual={perfilUsuario}
           onLoteCreado={handleLoteCreado}
         />
@@ -364,7 +341,7 @@ export default function App() {
           onClose={() => setLoteDetalle(null)}
           loteInicial={loteDetalle}
           config={config}
-          userEmail={usuario?.email || ADMIN_MASTER_EMAIL}
+          userEmail={usuario?.email || ''}
           perfilActual={perfilUsuario}
           onLoteActualizado={(loteActualizado) => setLoteDetalle(loteActualizado)}
           onAbrirVistaPublica={(codigo) => {
